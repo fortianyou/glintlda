@@ -163,6 +163,13 @@ package object util {
     result
   }
 
+  def time[A]()(func: => A): Long = {
+    val start = System.nanoTime()
+    func
+    val elapsed = System.nanoTime() - start
+    elapsed
+  }
+
   /**
     * Registers the kryo classes necessary to run the algorithm with kryo serialization in spark
     *

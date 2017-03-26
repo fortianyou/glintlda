@@ -4,8 +4,10 @@ import breeze.linalg.Vector
 import glint.iterators.RowBlockIterator
 import glint.models.client.buffered.BufferedBigMatrix
 import glintlda.util.{AggregateBuffer, FastRNG, SimpleLock, time}
-import glintlda.{GibbsSample, Solver, LDAModel}
+import glintlda.{FreqAwareGibbsSample, GibbsSample, LDAModel, Solver}
+import you.dataserver.DataServerClient
 
+import scala.collection.mutable
 import scala.concurrent.Await
 import scala.concurrent.duration._
 
@@ -19,6 +21,8 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
 
   val bufferSize = 100000
   val lock = new SimpleLock(16, logger)
+  var globalSummary: Array[Long] = null
+  val nOfTopics = model.config.topics
 
   /**
     * Runs the LDA inference algorithm on given partition of the data
@@ -33,13 +37,19 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
     val sampler = new Sampler(model.config, model.config.mhSteps, random)
 
     // Pull global topic counts
-    val global = Await.result(model.topicCounts.pull((0L until model.config.topics).toArray), 300 seconds)
+    val global: Array[Long] = Await.result(model.topicCounts.pull((0L until model.config.topics).toArray), 300 seconds)
+    globalSummary = global
 
     // Initialize variables used during iteration of model slices
     var start: Int = 0
     var end: Int = 0
     var rowWait = System.currentTimeMillis()
 
+    val ndt = time(logger, "Pull data server wait time: ") {
+      /** GTY **/
+      val docKeys = samples.map(_.docId)
+      ds.pull(docKeys)
+    }
     // Iterate over blocks of rows of the word topic count matrix
     new RowBlockIterator[Long](model.wordTopicCounts, model.config.blockSize).foreach {
       case rowBlock =>
@@ -59,7 +69,7 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
 
         // Perform resampling
         time(logger, "Resampling time: ") {
-          resample(samples, sampler, global, rowBlock, aliasTables, start, end)
+          resample(samples, sampler, global, rowBlock, aliasTables, ndt, start, end)
         }
 
         // Log flush lock wait times
@@ -101,6 +111,12 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
     var end: Int = 0
     var rowWait = System.currentTimeMillis()
 
+    val ndt = time(logger, "Pull data server wait time: ") {
+      /** GTY **/
+      val docKeys = samples.map(_.docId)
+      ds.pull(docKeys)
+    }
+
     // Iterate over blocks of rows of the word topic count matrix
     new RowBlockIterator[Long](model.wordTopicCounts, model.config.blockSize).foreach {
       case rowBlock =>
@@ -120,7 +136,7 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
 
         // Perform resampling without updating global counts
         time(logger, "Resampling time: ") {
-          resample(samples, sampler, global, rowBlock, aliasTables, start, end, false)
+          resample(samples, sampler, global, rowBlock, aliasTables, ndt, start, end, false)
         }
 
         // Increment start index for next block of rows
@@ -140,7 +156,12 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
     val aliasTables = new Array[AliasTable](block.length)
     var k = 0
     while (k < block.length) {
-      aliasTables(k) = new AliasTable(block(k).map(x => x.toDouble + model.config.β))
+
+      val probs = block(k).map(_.toDouble + model.config.β)
+      for (i <- 0 until nOfTopics) {
+        probs(i) /= globalSummary(i)
+      }
+      aliasTables(k) = new AliasTable(probs)
       k += 1
     }
     aliasTables
@@ -162,6 +183,7 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
                global: Array[Long],
                block: Array[Vector[Long]],
                aliasTables: Array[AliasTable],
+               ndt: mutable.HashMap[Int, mutable.Map[Int, Int]],
                start: Int,
                end: Int,
                shouldUpdateModel: Boolean = true) = {
@@ -169,20 +191,33 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
     // Create buffer
     val aggregateBuffer = new AggregateBuffer(model.config.powerlawCutoff, model.config)
     val bufferGlobal = new Array[Long](model.config.topics)
-    val buffer = new BufferedBigMatrix[Long](model.wordTopicCounts, bufferSize)
+    //val buffer = new BufferedBigMatrix[Long](model.wordTopicCounts, bufferSize)
+
+    var total_time: Long = 0
 
     // Store global counts in sampler
     sampler.globalCounts = global
 
     // Iterate over documents, resampling each one
     var i = 0
+
     while (i < samples.length) {
 
       // Get sample and store appropriate counts in the sampler
       val sample = samples(i)
       sampler.documentCounts = sample.denseCounts(model.config.topics)
+      /** GTY: amend the count of un-frequency words**/
+      ndt(sample.docId).foreach{
+        case (topic, cnt) =>
+
+          sampler.documentCounts(topic) += cnt
+      }
+      /** GTY **/
+
+
       sampler.documentSize = sample.features.length
       sampler.documentTopicAssignments = sample.topics
+      val zeroTopicSet = new mutable.HashSet[Int]()
 
       // Iterate over features
       var j = 0
@@ -210,15 +245,30 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
               sampler.globalCounts(oldTopic) -= 1
               sampler.globalCounts(newTopic) += 1
 
+              total_time += time() {
+                /** GTY**: update sparse n(d,t) on data server */
+                while (!ds.increaseBufferred(sample.docId, oldTopic, -1)) ds.flushIncBuffer()
+                while (!ds.increaseBufferred(sample.docId, newTopic, +1)) ds.flushIncBuffer()
+                if (sampler.documentCounts(oldTopic) == 0) {
+                  zeroTopicSet.add(oldTopic)
+                }
+                zeroTopicSet.remove(newTopic)
+              }
+              /**GTY**: update sparse n(d,t) on data server*/
+
+
               if (feature < aggregateBuffer.cutoff) {
                 aggregateBuffer.add(feature, newTopic, 1)
                 aggregateBuffer.add(feature, oldTopic, -1)
               } else {
+                /*GTY*: will never get here
                 // Add to buffer and flush if necessary
                 buffer.pushToBuffer(feature, oldTopic, -1)
                 flushBufferIfFull(buffer, lock)
                 buffer.pushToBuffer(feature, newTopic, 1)
                 flushBufferIfFull(buffer, lock)
+                */
+                assert(false)
               }
 
               bufferGlobal(oldTopic) -= 1
@@ -228,17 +278,38 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
           }
         }
 
+
         j += 1
       }
+
+
+      total_time += time(){
+
+        for (t <- zeroTopicSet) {
+          while (!ds.delBufferred(sample.docId, t)) {
+            //保证不会删除后又有新增
+            ds.flushIncBuffer()
+            ds.flushDelBuffer()
+          }
+        }
+      }
+
       i += 1
     }
+
+    total_time += time() {
+      ds.flushIncBuffer()
+      ds.flushDelBuffer()
+    }
+
+    logger.info(s"Update data server wait time: ${total_time/1000000}ms")
 
     // Flush powerlaw buffer
     lock.acquire()
     aggregateBuffer.flush(model.wordTopicCounts).onComplete(_ => lock.release())
 
     // Flush buffer to push changes to word topic counts
-    flushBuffer(buffer, lock)
+    //flushBuffer(buffer, lock)
 
     // Flush global topic counts
     lock.acquire()

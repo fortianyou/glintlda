@@ -131,7 +131,8 @@ object LDAModel {
     * @param config The LDA configuration
     */
   def apply(gc: Client, config: LDAConfig): LDAModel = {
-    val topicWordCounts = gc.matrix[Long](config.vocabularyTerms, config.topics, 2, (x,y) => CyclicPartitioner(x, y))
+    //val topicWordCounts = gc.matrix[Long](config.vocabularyTerms, config.topics, 2, (x,y) => CyclicPartitioner(x, y))
+    val topicWordCounts = gc.matrix[Long](config.powerlawCutoff, config.topics, 2, (x,y) => CyclicPartitioner(x, y))
     val granularTopicWordCounts = new GranularBigMatrix[Long](topicWordCounts, 120000)
     val globalCounts = new RetryBigVector[Long](gc.vector[Long](config.topics, 1), 5)
     new LDAModel(new RetryBigMatrix[Long](granularTopicWordCounts, 5), globalCounts, config)

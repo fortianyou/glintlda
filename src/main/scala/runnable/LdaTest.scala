@@ -18,7 +18,7 @@ object LdaTest {
     val sc = new SparkContext(conf)
     val file = args(0)
 
-    val data: RDD[Array[String]] = sc.textFile(file).map{
+    val data: RDD[Array[String]] = sc.textFile(file, 10).map{
       line =>
         line.split("\\s+")
     }
@@ -26,7 +26,9 @@ object LdaTest {
     data.cache()
     val vocab_freq = data.flatMap(_.map((_, 1))).reduceByKey(_ + _).collect()
 
-    val word2id = vocab_freq.sortBy(_._2).map(_._1).zipWithIndex.toMap
+    //倒序排列
+    val vocab_freq_sorted = vocab_freq.sortBy( - _._2).map(_._1)
+    val word2id = vocab_freq_sorted.zipWithIndex.toMap
 
     val idData = data.map{
       words =>
@@ -47,6 +49,8 @@ object LdaTest {
     ldaConfig.setβ(0.01)
     ldaConfig.setTopics(100)
     ldaConfig.setVocabularyTerms(word2id.size)
+    ldaConfig.setPowerlawCutoff(word2id.size * 2 / 5)
+    ldaConfig.setPartitions(10)
     val model = Solver.fitMetropolisHastings(sc, gc, idData, ldaConfig)
   }
 

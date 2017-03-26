@@ -4,7 +4,7 @@ import breeze.linalg.Vector
 import glint.iterators.RowBlockIterator
 import glint.models.client.buffered.BufferedBigMatrix
 import glintlda.util.{FastRNG, SimpleLock, time}
-import glintlda.{GibbsSample, Solver, LDAModel}
+import glintlda.{FreqAwareGibbsSample, GibbsSample, LDAModel, Solver}
 
 import scala.concurrent.Await
 import scala.concurrent.duration._

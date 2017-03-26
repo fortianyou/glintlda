@@ -8,5 +8,5 @@
 
 #########################################################################
 JAR=classes/artifacts/glintlda_jar/glintlda.jar
-zip -d $JAR 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*SF'
-scp $JAR root@bda04:/home/gty/LDA/
+#zip -d $JAR 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*SF'
+scp $JAR root@bda07:/home/gty/LDA/

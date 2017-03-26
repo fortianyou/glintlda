@@ -30,6 +30,8 @@ libraryDependencies += "org.scalanlp" %% "breeze-natives" % "0.11.2"
 
 libraryDependencies += "org.scalatest" % "scalatest_2.10" % "2.2.4" % "test"
 
+libraryDependencies += "redis.clients" % "jedis" % "2.9.0"
+
 fork in Test := true
 
 javaOptions in Test += "-Xmx2048m"
