@@ -157,12 +157,13 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
     val aliasTables = new Array[AliasTable](block.length)
     var k = 0
     while (k < block.length) {
-
       val probs = block(k).map(_.toDouble + model.config.β)
-      for (i <- 0 until nOfTopics) {
-        probs(i) /= globalSummary(i)
-      }
+      /*
+            for (i <- 0 until nOfTopics) {
+              probs(i) /= globalSummary(i)
+            }*/
       aliasTables(k) = new AliasTable(probs)
+
       k += 1
     }
     aliasTables
@@ -313,15 +314,14 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
 
     time(logger, "Push data to ps use time: ") {
       // Flush powerlaw buffer
-      lock.acquire()
-      aggregateBuffer.flush(model.wordTopicCounts).onComplete(_ => lock.release())
+      time(logger, "lock time acquire time: ") {
+        lock.acquire()
+        aggregateBuffer.flush(model.wordTopicCounts).onComplete(_ => lock.release())
+        lock.acquire()
+      }
 
-      // Flush buffer to push changes to word topic counts
-      //flushBuffer(buffer, lock)
-
-      // Flush global topic counts
-      lock.acquire()
-      logger.info(s"n(global) = ${bufferGlobal.length}, sum(global) = ${bufferGlobal.sum}, nozero(global) = ${bufferGlobal.filter(_ != 0).size}")
+      logger.info(s"n(global) = ${bufferGlobal.length}, sum(global) = ${bufferGlobal.sum}," +
+        s" nozero(global) = ${bufferGlobal.filter(_ != 0).size}")
       val flushGlobal = model.topicCounts.push((0L until model.config.topics).toArray, bufferGlobal)
       flushGlobal.onComplete(_ => lock.release())
       flushGlobal.onFailure { case ex => println(ex.getMessage + "\n" + ex.getStackTraceString) }
