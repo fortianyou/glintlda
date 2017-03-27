@@ -191,9 +191,9 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
                shouldUpdateModel: Boolean = true) = {
 
     // Create buffer
-    val aggregateBuffer = new AggregateBuffer(model.config.powerlawCutoff, model.config)
+    //val aggregateBuffer = new AggregateBuffer(model.config.powerlawCutoff, model.config)
     val bufferGlobal = new Array[Long](model.config.topics)
-    //val buffer = new BufferedBigMatrix[Long](model.wordTopicCounts, bufferSize)
+    val buffer = new BufferedBigMatrix[Long](model.wordTopicCounts, bufferSize)
 
     var total_time: Long = 0
 
@@ -262,19 +262,18 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
               /** GTY**: update sparse n(d,t) on data server */
 
 
-              if (feature < aggregateBuffer.cutoff) {
+             /* if (feature < aggregateBuffer.cutoff) {
                 aggregateBuffer.add(feature, newTopic, 1)
                 aggregateBuffer.add(feature, oldTopic, -1)
               } else {
-                /*GTY*: will never get here
+              */
+              /** GTY: for now buffer is a lot faster than aggregteBuffer */
                 // Add to buffer and flush if necessary
                 buffer.pushToBuffer(feature, oldTopic, -1)
                 flushBufferIfFull(buffer, lock)
                 buffer.pushToBuffer(feature, newTopic, 1)
                 flushBufferIfFull(buffer, lock)
-                */
-                assert(false)
-              }
+              //}
 
               bufferGlobal(oldTopic) -= 1
               bufferGlobal(newTopic) += 1
@@ -314,17 +313,17 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
     time(logger, "push data use time: ") {
       // Flush powerlaw buffer
       time(logger, "lock acquire use time: ") {
-        lock.acquire()
-
-        time(logger, "flush aggregate buffer use time: ") {
+        /*time(logger, "flush aggregate buffer use time: ") {
           logger.info(s"n(aggregate) = ${aggregateBuffer.size}, sum(aggregate) = ${aggregateBuffer.buffer.sum}," +
             s" nozero(aggregate) = ${aggregateBuffer.buffer.filter(_ != 0).size}")
 
           aggregateBuffer.flush(model.wordTopicCounts).onComplete(_ => lock.release())
-        }
+        }*/
+
+        // Flush buffer to push changes to word topic counts
+        flushBuffer(buffer, lock)
         lock.acquire()
       }
-
       logger.info(s"n(global) = ${bufferGlobal.length}, sum(global) = ${bufferGlobal.sum}," +
         s" nozero(global) = ${bufferGlobal.filter(_ != 0).size}")
       val flushGlobal = model.topicCounts.push((0L until model.config.topics).toArray, bufferGlobal)
