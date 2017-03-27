@@ -15,7 +15,7 @@ import scala.collection.mutable
   */
 class DataServerClient[@spec(Double, Int, Long, Float) T](host: String = "localhost",
                        port: Int = 6379,
-                       bufferSize: Int = 1000)(implicit m: ClassTag[T]) {
+                       bufferSize: Int = 100000)(implicit m: ClassTag[T]) {
 
   val jedisPool = new JedisPool(host, port)
 

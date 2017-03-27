@@ -229,10 +229,6 @@ object Solver {
     fit(sc, gc, samples, config, (model, id) => new NaiveSolver(model, id))
   }
 
-  def init(): Unit = {
-
-  }
-
   /**
     * Runs the solver
     *

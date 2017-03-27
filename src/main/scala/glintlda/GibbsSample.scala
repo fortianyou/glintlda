@@ -180,7 +180,7 @@ object GibbsSample {
     * @param cutoff The start index of low-frequency words
     * @return An initialized Gibbs sample with random (uniform) topic assignments
     */
-  def apply(sv: SparseVector[Int], random: FastRNG, topics: Int, docId: Int, cutoff: Int): FreqAwareGibbsSample = {
+  def apply(sv: SparseVector[Int], random: FastRNG, topics: Int, cutoff: Int, docId: Int): FreqAwareGibbsSample = {
     val cutOffIndex = binarySearch(sv, cutoff)
     var freqTotalTokens = 0
     var unFreqTotalTokens = 0
@@ -191,9 +191,16 @@ object GibbsSample {
       i += 1
     }
 
-   // println(s"$freqTotalTokens $unFreqTotalTokens")
 
     val hasUnFreq = unFreqTotalTokens > 0
+
+    //TODO: 删除打印
+    if (hasUnFreq) {
+      println(cutoff)
+      println(cutOffIndex)
+      println(sv.toString())
+      println(s"$freqTotalTokens $unFreqTotalTokens")
+    }
     val freqSample = new GibbsSample(new Array[Int](freqTotalTokens), new Array[Int](freqTotalTokens), docId, hasUnFreq)
     val unFreqSample = new GibbsSample(new Array[Int](unFreqTotalTokens), new Array[Int](unFreqTotalTokens), docId, hasUnFreq)
 
