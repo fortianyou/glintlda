@@ -321,6 +321,7 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
 
       // Flush global topic counts
       lock.acquire()
+      logger.info(s"n(global) = ${bufferGlobal.length}, sum(global) = ${bufferGlobal.sum}, nozero(global) = ${bufferGlobal.filter(_ != 0).size}")
       val flushGlobal = model.topicCounts.push((0L until model.config.topics).toArray, bufferGlobal)
       flushGlobal.onComplete(_ => lock.release())
       flushGlobal.onFailure { case ex => println(ex.getMessage + "\n" + ex.getStackTraceString) }
