@@ -51,37 +51,43 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
       }
 
       var rowWait = System.currentTimeMillis()
-      // Iterate over blocks of rows of the word topic count matrix
-      new RowBlockIterator[Long](model.wordTopicCounts, model.config.blockSize).foreach {
-        case rowBlock =>
-          //  logger.info(s"Row block wait time: ${System.currentTimeMillis() - rowWait}ms")
 
-          // Reset flush lock time
-          lock.waitTime = 0
+      var tot_blocks = 0
+      val tot_time = time() {
+        // Iterate over blocks of rows of the word topic count matrix
+        new RowBlockIterator[Long](model.wordTopicCounts, model.config.blockSize).foreach {
+          case rowBlock =>
+            //  logger.info(s"Row block wait time: ${System.currentTimeMillis() - rowWait}ms")
+            tot_blocks +=1
+            // Reset flush lock time
+            lock.waitTime = 0
 
-          // Perform resampling on just this block of rows from the word topic count matrix
-          end += rowBlock.length
-          // logger.info(s"Resampling features [${start}, ..., ${end})")
+            // Perform resampling on just this block of rows from the word topic count matrix
+            end += rowBlock.length
+            // logger.info(s"Resampling features [${start}, ..., ${end})")
 
-          // Compute alias tables
-          val aliasTables = //time(logger, "Alias time: ") {
-          computeAliasTables(rowBlock)
-          // }
+            // Compute alias tables
+            val aliasTables = //time(logger, "Alias time: ") {
+            computeAliasTables(rowBlock)
+            // }
 
-          // Perform resampling
-          //time(logger, "Resampling time: ") {
-          resample(samples, sampler, global, rowBlock, aliasTables, ndt, start, end)
-          //}
+            // Perform resampling
+            //time(logger, "Resampling time: ") {
+            resample(samples, sampler, global, rowBlock, aliasTables, ndt, start, end)
+            //}
 
-          // Log flush lock wait times
-          //       logger.info(s"Flush lock wait time: ${lock.waitTime}ms")
+            // Log flush lock wait times
+            //       logger.info(s"Flush lock wait time: ${lock.waitTime}ms")
 
-          // Increment start index for next block of rows
-          start += rowBlock.length
-          rowWait = System.currentTimeMillis()
+            // Increment start index for next block of rows
+            start += rowBlock.length
+            rowWait = System.currentTimeMillis()
+
+        }
 
       }
 
+      logger.info(s"each block use time: ${tot_time/1000000/tot_blocks}ms, total ${tot_blocks} blocks")
       // Wait until all changes have succesfully propagated to the parameter server before finishing this iteration
       logger.info(s"Waiting for transfers to finish")
       lock.acquireAll()
