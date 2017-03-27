@@ -205,103 +205,103 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
 
     val timer = new Timer()
     val zeroTopicSet = new mutable.HashSet[Int]()
-      while (i < samples.length) {
+    while (i < samples.length) {
 
-        // Get sample and store appropriate counts in the sampler
-        val sample = samples(i)
-        sampler.documentCounts = sample.denseCounts(model.config.topics)
+      // Get sample and store appropriate counts in the sampler
+      val sample = samples(i)
+      sampler.documentCounts = sample.denseCounts(model.config.topics)
 
-        /** GTY: amend the count of un-frequency words **/
-        ndt(sample.docId).foreach {
-          case (topic, cnt) =>
-            sampler.documentCounts(topic) += cnt
-        }
+      /** GTY: amend the count of un-frequency words **/
+      ndt(sample.docId).foreach {
+        case (topic, cnt) =>
+          sampler.documentCounts(topic) += cnt
+      }
 
-        /** GTY **/
+      /** GTY **/
 
 
-        sampler.documentSize = sample.features.length
-        sampler.documentTopicAssignments = sample.topics
+      sampler.documentSize = sample.features.length
+      sampler.documentTopicAssignments = sample.topics
 
-        // Iterate over features
-        var j = 0
-        while (j < sample.features.length) {
+      // Iterate over features
+      var j = 0
+      while (j < sample.features.length) {
 
-          // If feature is in the current working set of features we perform actual resampling
-          val feature = sample.features(j)
-          val oldTopic = sample.topics(j)
-          if (feature >= start && feature < end) {
+        // If feature is in the current working set of features we perform actual resampling
+        val feature = sample.features(j)
+        val oldTopic = sample.topics(j)
+        if (feature >= start && feature < end) {
 
-            // Resample feature
-            sampler.wordCounts = block(feature - start)
-            sampler.aliasTable = aliasTables(feature - start)
-            val newTopic = sampler.sampleFeature(feature, oldTopic)
+          // Resample feature
+          sampler.wordCounts = block(feature - start)
+          sampler.aliasTable = aliasTables(feature - start)
+          val newTopic = sampler.sampleFeature(feature, oldTopic)
 
-            // Topic has changed, update the necessary counts
-            if (oldTopic != newTopic) {
-              sample.topics(j) = newTopic
-              sampler.documentCounts(oldTopic) -= 1
-              sampler.documentCounts(newTopic) += 1
+          // Topic has changed, update the necessary counts
+          if (oldTopic != newTopic) {
+            sample.topics(j) = newTopic
+            sampler.documentCounts(oldTopic) -= 1
+            sampler.documentCounts(newTopic) += 1
 
-              if (shouldUpdateModel) {
-                sampler.wordCounts(oldTopic) -= 1
-                sampler.wordCounts(newTopic) += 1
-                sampler.globalCounts(oldTopic) -= 1
-                sampler.globalCounts(newTopic) += 1
+            if (shouldUpdateModel) {
+              sampler.wordCounts(oldTopic) -= 1
+              sampler.wordCounts(newTopic) += 1
+              sampler.globalCounts(oldTopic) -= 1
+              sampler.globalCounts(newTopic) += 1
 
-                total_time += time() {
-                  /** GTY**: update sparse n(d,t) on data server */
-                  while (!ds.increaseBufferred(sample.docId, oldTopic, -1)) ds.flushIncBuffer()
-                  while (!ds.increaseBufferred(sample.docId, newTopic, +1)) ds.flushIncBuffer()
-                  if (sampler.documentCounts(oldTopic) == 0) {
-                    zeroTopicSet.add(oldTopic)
-                  }
-                  zeroTopicSet.remove(newTopic)
-                }
-
+              total_time += time() {
                 /** GTY**: update sparse n(d,t) on data server */
+                while (!ds.increaseBufferred(sample.docId, oldTopic, -1)) ds.flushIncBuffer()
+                while (!ds.increaseBufferred(sample.docId, newTopic, +1)) ds.flushIncBuffer()
+                if (sampler.documentCounts(oldTopic) == 0) {
+                  zeroTopicSet.add(oldTopic)
+                }
+                zeroTopicSet.remove(newTopic)
+              }
+
+              /** GTY**: update sparse n(d,t) on data server */
 
 
-                if (feature < aggregateBuffer.cutoff) {
-                  aggregateBuffer.add(feature, newTopic, 1)
-                  aggregateBuffer.add(feature, oldTopic, -1)
-                } else {
-                  /*GTY*: will never get here
+              if (feature < aggregateBuffer.cutoff) {
+                aggregateBuffer.add(feature, newTopic, 1)
+                aggregateBuffer.add(feature, oldTopic, -1)
+              } else {
+                /*GTY*: will never get here
                 // Add to buffer and flush if necessary
                 buffer.pushToBuffer(feature, oldTopic, -1)
                 flushBufferIfFull(buffer, lock)
                 buffer.pushToBuffer(feature, newTopic, 1)
                 flushBufferIfFull(buffer, lock)
                 */
-                  assert(false)
-                }
-
-                bufferGlobal(oldTopic) -= 1
-                bufferGlobal(newTopic) += 1
+                assert(false)
               }
 
+              bufferGlobal(oldTopic) -= 1
+              bufferGlobal(newTopic) += 1
             }
+
           }
-
-
-          j += 1
         }
 
-        total_time += time() {
 
-          for (t <- zeroTopicSet) {
-            while (!ds.delBufferred(sample.docId, t)) {
-              //保证不会删除后又有新增
-              ds.flushIncBuffer()
-              ds.flushDelBuffer()
-            }
-          }
-
-          zeroTopicSet.clear()
-        }
-
-        i += 1
+        j += 1
       }
+
+      total_time += time() {
+
+        for (t <- zeroTopicSet) {
+          while (!ds.delBufferred(sample.docId, t)) {
+            //保证不会删除后又有新增
+            ds.flushIncBuffer()
+            ds.flushDelBuffer()
+          }
+        }
+
+        zeroTopicSet.clear()
+      }
+
+      i += 1
+    }
 
     logger.info(s"Iterate over the corpus use time: " + timer.getReadableRunnningTime())
 
@@ -310,13 +310,18 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
       ds.flushDelBuffer()
     }
 
-    logger.info(s"Update data server wait time: ${total_time/1000000}ms")
-
-    time(logger, "Push data to ps use time: ") {
+    logger.info(s"Update data server wait time: ${total_time / 1000000}ms")
+    time(logger, "push data use time: ") {
       // Flush powerlaw buffer
-      time(logger, "lock time acquire time: ") {
+      time(logger, "lock acquire use time: ") {
         lock.acquire()
-        aggregateBuffer.flush(model.wordTopicCounts).onComplete(_ => lock.release())
+
+        time(logger, "flush aggregate buffer use time: ") {
+          logger.info(s"n(aggregate) = ${aggregateBuffer.size}, sum(aggregate) = ${aggregateBuffer.buffer.sum}," +
+            s" nozero(aggregate) = ${aggregateBuffer.buffer.filter(_ != 0).size}")
+
+          aggregateBuffer.flush(model.wordTopicCounts).onComplete(_ => lock.release())
+        }
         lock.acquire()
       }
 
