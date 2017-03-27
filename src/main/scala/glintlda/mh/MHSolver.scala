@@ -53,10 +53,13 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
       var rowWait = System.currentTimeMillis()
 
       var tot_blocks = 0
+      var totReSampleTime:Long = 0
+      var totBlockReadTime: Long = 0
       val tot_time = time() {
         // Iterate over blocks of rows of the word topic count matrix
         new RowBlockIterator[Long](model.wordTopicCounts, model.config.blockSize).foreach {
           case rowBlock =>
+            totBlockReadTime += System.currentTimeMillis() - rowWait
             //  logger.info(s"Row block wait time: ${System.currentTimeMillis() - rowWait}ms")
             tot_blocks +=1
             // Reset flush lock time
@@ -73,8 +76,9 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
 
             // Perform resampling
             //time(logger, "Resampling time: ") {
+            totReSampleTime += time() {
             resample(samples, sampler, global, rowBlock, aliasTables, ndt, start, end)
-            //}
+            }
 
             // Log flush lock wait times
             //       logger.info(s"Flush lock wait time: ${lock.waitTime}ms")
@@ -88,6 +92,9 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
       }
 
       logger.info(s"each block use time: ${tot_time/1000000/tot_blocks}ms, total ${tot_blocks} blocks")
+      logger.info(s"total re-sample time: ${totReSampleTime/1000000}, total block read time: ${totBlockReadTime}")
+      // Wait until all changes have succesfully propagated to the parameter server before finishing this iteration
+
       // Wait until all changes have succesfully propagated to the parameter server before finishing this iteration
       logger.info(s"Waiting for transfers to finish")
       lock.acquireAll()
