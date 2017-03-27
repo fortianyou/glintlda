@@ -17,9 +17,8 @@ import org.apache.spark.scheduler._
 import org.apache.spark.storage.StorageLevel
 import org.slf4j.LoggerFactory
 import you.dataserver.DataServerClient
-
+import glintlda.util._
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration._
 import scala.concurrent.{Await, ExecutionContext, Future}
 
@@ -328,8 +327,10 @@ object Solver {
           (0.0, 0L)
       }
 
-      val localSolver = new mh.onps.MHSolver(model)
-      localSolver.fit(lowFreqGibbsSamples, location.map(x => (x._2, x._1)))
+      time(logger, "local solver use time: ") {
+        val localSolver = new mh.onps.MHSolver(model)
+        localSolver.fit(lowFreqGibbsSamples, location.map(x => (x._2, x._1)))
+      }
 
       if (rebuildCountTable.get()) {
 

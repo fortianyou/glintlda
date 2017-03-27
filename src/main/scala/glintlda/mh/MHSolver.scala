@@ -31,61 +31,62 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
     * @param iteration The iteration number
     */
   override protected def fit(samples: Array[GibbsSample], iteration: Int): Unit = {
+    time(logger, "fit use time: ") {
+      // Create random and sampler
+      val random = new FastRNG(model.config.seed + id)
+      val sampler = new Sampler(model.config, model.config.mhSteps, random)
 
-    // Create random and sampler
-    val random = new FastRNG(model.config.seed + id)
-    val sampler = new Sampler(model.config, model.config.mhSteps, random)
+      // Pull global topic counts
+      val global: Array[Long] = Await.result(model.topicCounts.pull((0L until model.config.topics).toArray), 300 seconds)
+      globalSummary = global
 
-    // Pull global topic counts
-    val global: Array[Long] = Await.result(model.topicCounts.pull((0L until model.config.topics).toArray), 300 seconds)
-    globalSummary = global
+      // Initialize variables used during iteration of model slices
+      var start: Int = 0
+      var end: Int = 0
 
-    // Initialize variables used during iteration of model slices
-    var start: Int = 0
-    var end: Int = 0
+      val ndt = time(logger, "Pull data server wait time: ") {
+        /** GTY **/
+        val docKeys = samples.map(_.docId)
+        ds.pull(docKeys)
+      }
 
-    val ndt = time(logger, "Pull data server wait time: ") {
-      /** GTY **/
-      val docKeys = samples.map(_.docId)
-      ds.pull(docKeys)
-    }
+      var rowWait = System.currentTimeMillis()
+      // Iterate over blocks of rows of the word topic count matrix
+      new RowBlockIterator[Long](model.wordTopicCounts, model.config.blockSize).foreach {
+        case rowBlock =>
+          //  logger.info(s"Row block wait time: ${System.currentTimeMillis() - rowWait}ms")
 
-    var rowWait = System.currentTimeMillis()
-    // Iterate over blocks of rows of the word topic count matrix
-    new RowBlockIterator[Long](model.wordTopicCounts, model.config.blockSize).foreach {
-      case rowBlock =>
-        logger.info(s"Row block wait time: ${System.currentTimeMillis() - rowWait}ms")
+          // Reset flush lock time
+          lock.waitTime = 0
 
-        // Reset flush lock time
-        lock.waitTime = 0
+          // Perform resampling on just this block of rows from the word topic count matrix
+          end += rowBlock.length
+          // logger.info(s"Resampling features [${start}, ..., ${end})")
 
-        // Perform resampling on just this block of rows from the word topic count matrix
-        end += rowBlock.length
-        logger.info(s"Resampling features [${start}, ..., ${end})")
-
-        // Compute alias tables
-        val aliasTables = time(logger, "Alias time: ") {
+          // Compute alias tables
+          val aliasTables = //time(logger, "Alias time: ") {
           computeAliasTables(rowBlock)
-        }
+          // }
 
-        // Perform resampling
-        time(logger, "Resampling time: ") {
+          // Perform resampling
+          //time(logger, "Resampling time: ") {
           resample(samples, sampler, global, rowBlock, aliasTables, ndt, start, end)
-        }
+          //}
 
-        // Log flush lock wait times
-        logger.info(s"Flush lock wait time: ${lock.waitTime}ms")
+          // Log flush lock wait times
+          //       logger.info(s"Flush lock wait time: ${lock.waitTime}ms")
 
-        // Increment start index for next block of rows
-        start += rowBlock.length
-        rowWait = System.currentTimeMillis()
+          // Increment start index for next block of rows
+          start += rowBlock.length
+          rowWait = System.currentTimeMillis()
 
+      }
+
+      // Wait until all changes have succesfully propagated to the parameter server before finishing this iteration
+      logger.info(s"Waiting for transfers to finish")
+      lock.acquireAll()
+      lock.releaseAll()
     }
-
-    // Wait until all changes have succesfully propagated to the parameter server before finishing this iteration
-    logger.info(s"Waiting for transfers to finish")
-    lock.acquireAll()
-    lock.releaseAll()
 
   }
 
@@ -302,17 +303,17 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
       i += 1
     }
 
-    logger.info(s"Iterate over the corpus use time: " + timer.getReadableRunnningTime())
+    //logger.info(s"Iterate over the corpus use time: " + timer.getReadableRunnningTime())
 
     total_time += time() {
       ds.flushIncBuffer()
       ds.flushDelBuffer()
     }
 
-    logger.info(s"Update data server wait time: ${total_time / 1000000}ms")
-    time(logger, "push data use time: ") {
+    //logger.info(s"Update data server wait time: ${total_time / 1000000}ms")
+   // time(logger, "push data use time: ") {
       // Flush powerlaw buffer
-      time(logger, "lock acquire use time: ") {
+    //  time(logger, "lock acquire use time: ") {
         /*time(logger, "flush aggregate buffer use time: ") {
           logger.info(s"n(aggregate) = ${aggregateBuffer.size}, sum(aggregate) = ${aggregateBuffer.buffer.sum}," +
             s" nozero(aggregate) = ${aggregateBuffer.buffer.filter(_ != 0).size}")
@@ -323,13 +324,13 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
         // Flush buffer to push changes to word topic counts
         flushBuffer(buffer, lock)
         lock.acquire()
-      }
-      logger.info(s"n(global) = ${bufferGlobal.length}, sum(global) = ${bufferGlobal.sum}," +
-        s" nozero(global) = ${bufferGlobal.filter(_ != 0).size}")
+     // }
+      //logger.info(s"n(global) = ${bufferGlobal.length}, sum(global) = ${bufferGlobal.sum}," +
+      //  s" nozero(global) = ${bufferGlobal.filter(_ != 0).size}")
       val flushGlobal = model.topicCounts.push((0L until model.config.topics).toArray, bufferGlobal)
       flushGlobal.onComplete(_ => lock.release())
       flushGlobal.onFailure { case ex => println(ex.getMessage + "\n" + ex.getStackTraceString) }
-    }
+    //}
   }
 
   /**
