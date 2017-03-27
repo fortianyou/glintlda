@@ -48,7 +48,9 @@ abstract class Solver(model: LDAModel, id: Int) {
 
     // Initialize buffered matrix for word topic counts
     val buffer = new BufferedBigMatrix[Long](model.wordTopicCounts, 100000)
-    val aggregateBuffer = new AggregateBuffer(model.config.powerlawCutoff, model.config)
+
+    val aggregateCutoff = 1024*1024/model.config.topics
+    val aggregateBuffer = new AggregateBuffer(aggregateCutoff, model.config)
     val topics = new Array[Long](model.config.topics)
     val pushLock = new SimpleLock(16, logger)
 
@@ -72,8 +74,13 @@ abstract class Solver(model: LDAModel, id: Int) {
           flush.onFailure { case ex => logger.error(s"${ex.getMessage}\n${ex.getStackTraceString}") }
 
         }
-        //aggregate the frequency word n(t,w) counts
-        aggregateBuffer.add(freqSample.features(j), freqSample.topics(j), 1)
+
+        if (aggregateBuffer.cutoff > freqSample.features(j)) {
+          //aggregate the frequency word n(t,w) counts
+          aggregateBuffer.add(freqSample.features(j), freqSample.topics(j), 1)
+        } else {
+          buffer.pushToBuffer(freqSample.features(j), freqSample.topics(j), 1)
+        }
         topics(freqSample.topics(j)) += 1
 
         j += 1
