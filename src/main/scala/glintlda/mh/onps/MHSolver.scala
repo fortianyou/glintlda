@@ -44,84 +44,99 @@ class MHSolver(model: LDAModel){
     time(logger, "Ps side sampling wait time: ") {
       for (p <- locations.keySet) {
         val proposals = new ArrayBuffer[(Int, Int, Int, Int, Int, Double)]()
-        samples.foreach {
-          case (word, sample) =>
 
-            val wordCount = sample.denseWordCounts(nOfTopics)
-            val aliasTable = computeAliasTables(wordCount)
+        time(logger, s"Sample time for partition ${p}") {
+          samples.foreach {
+            case (word, sample) =>
 
-            for (i <- 0 until sample.features.length) {
-              if (sample.localtion(i) == p) {
-                val s = sample.topics(i)
-                val t = aliasTable.draw(random)
-                val d = sample.features(i)
+              val wordCount = sample.denseWordCounts(nOfTopics)
+              val aliasTable = computeAliasTables(wordCount)
 
-                val wordS = wordCount(s) + model.config.β
-                val wordT = wordCount(t) + model.config.β
-                val globalS = global(s) + βsum
-                val globalT = global(t) + βsum
-                val propS = wordS / globalS
-                val propT = wordT / globalT
+              for (i <- 0 until sample.features.length) {
+                if (sample.localtion(i) == p) {
+                  val s = sample.topics(i)
+                  val t = aliasTable.draw(random)
+                  val d = sample.features(i)
 
-                val partialPi = (wordT * globalS * propS) / (wordS * globalT * propT)
-                proposals += ((word, d, i, s, t, partialPi))
+                  val wordS = wordCount(s) + model.config.β
+                  val wordT = wordCount(t) + model.config.β
+                  val globalS = global(s) + βsum
+                  val globalT = global(t) + βsum
+                  val propS = wordS / globalS
+                  val propT = wordT / globalT
+
+                  val partialPi = (wordT * globalS * propS) / (wordS * globalT * propT)
+                  proposals += ((word, d, i, s, t, partialPi))
+                }
               }
+          }
+        }
+
+        time(logger, "Proposal use time: ") {
+          val keys = proposals.flatMap(x => Array((x._2, x._4), (x._2, x._5))).distinct
+
+          var ndt: mutable.HashMap[Long, Int] = null
+          var ds:DataServerClient[Int] = null
+          var deltaNdt : mutable.HashMap[(Int, Int), Int] = null
+          time(logger, "Memory allocate time: ") {
+            ndt = new mutable.HashMap[Long, Int]()
+            ds = new DataServerClient[Int](host = locations(p))
+            deltaNdt = mutable.HashMap[(Int, Int), Int]()
+          }
+          time(logger, "Pull Data server use time: ") {
+            val results = ds.pull(keys.map(_._1), keys.map(_._2))
+            for (i <- 0 until keys.length) {
+              val key = keys(i)._1 * model.config.topics + keys(i)._2
+              ndt(key) = results(i)
             }
-        }
+          }
 
-        val keys = proposals.flatMap(x => Array((x._2, x._4), (x._2, x._5))).distinct
 
-        val ds = new DataServerClient[Int](host = locations(p))
-        val ndt = new mutable.HashMap[Long, Int]()
-        val results = ds.pull(keys.map(_._1), keys.map(_._2))
-        for (i <- 0 until keys.length) {
-          val key = keys(i)._1 * model.config.topics + keys(i)._2
-          ndt(key) = results(i)
-        }
+          time(logger, "Proposal accept use time: ") {
+            proposals.foreach {
+              case (word, d, i, s, t, partialPi) =>
+                val keyS = d * model.config.topics + s
+                val keyT = d * model.config.topics + t
+                val docS = ndt(keyS) - 1 + model.config.α
+                val docT = ndt(keyT) - 1 + model.config.α
+                val pi = partialPi * docT / docS
 
-        val deltaNdt = mutable.HashMap[(Int, Int), Int]()
+                if (random.nextDouble() < pi) {
+                  samples(word).topics(i) = t
+                  ndt(keyS) = ndt(keyS) - 1
+                  ndt(keyT) = ndt(keyT) + 1
 
-        proposals.foreach {
-          case (word, d, i, s, t, partialPi) =>
-            val keyS = d * model.config.topics + s
-            val keyT = d * model.config.topics + t
-            val docS = ndt(keyS) - 1 + model.config.α
-            val docT = ndt(keyT) - 1 + model.config.α
-            val pi = partialPi * docT / docS
+                  if (!deltaNdt.contains((d, s))) {
+                    deltaNdt.put((d, s), 0)
+                  }
 
-            if (random.nextDouble() < pi) {
-              samples(word).topics(i) = t
-              ndt(keyS) = ndt(keyS) - 1
-              ndt(keyT) = ndt(keyT) + 1
+                  if (!deltaNdt.contains((d, t))) {
+                    deltaNdt.put((d, t), 0)
+                  }
 
-              if (!deltaNdt.contains((d, s))) {
-                deltaNdt.put((d, s), 0)
-              }
-
-              if (!deltaNdt.contains((d, t))) {
-                deltaNdt.put((d, t), 0)
-              }
-
-              deltaNdt((d, s)) -= 1
-              deltaNdt((d, t)) += 1
+                  deltaNdt((d, s)) -= 1
+                  deltaNdt((d, t)) += 1
+                }
             }
-        }
+          }
 
+          time(logger, "Push Data use time: ") {
+            deltaNdt.filter(_._2 != 0).foreach {
+              case ((d, t), delta) =>
+                val keyT = d * model.config.topics + t
+                if (ndt(keyT) + delta == 0) {
+                  ds.delBufferred(d, t)
+                } else {
+                  ds.increaseBufferred(d, t, delta)
+                }
 
-        deltaNdt.filter(_._2 != 0).foreach {
-          case ((d, t), delta) =>
-            val keyT = d * model.config.topics + t
-            if (ndt(keyT) + delta == 0) {
-              ds.delBufferred(d, t)
-            } else {
-              ds.increaseBufferred(d, t, delta)
+                bufferGlobal.update(t, bufferGlobal(t) + delta)
             }
 
-            bufferGlobal.update(t, bufferGlobal(t) + delta)
+            ds.flushIncBuffer()
+            ds.flushDelBuffer()
+          }
         }
-
-        ds.flushIncBuffer()
-        ds.flushDelBuffer()
       }
     }
 
