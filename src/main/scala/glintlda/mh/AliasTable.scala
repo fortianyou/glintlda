@@ -1,6 +1,6 @@
 package glintlda.mh
 
-import breeze.linalg.{Vector, sum}
+import breeze.linalg.{DenseVector, SparseVector, Vector, sum}
 import glintlda.util.FastRNG
 
 /**
@@ -13,6 +13,10 @@ import glintlda.util.FastRNG
 class AliasTable(alias: Array[Int], prob: Array[Double]) {
 
   var count: Int = 0
+  var index: Array[Int] = null
+  var aliasProb:Double = 0.0
+  var aliasTable: AliasTable = null
+  var len: Double = 0.0
 
   /**
     * Creates a new alias table for given vector of counts (interpreted as scaled probabilities)
@@ -21,9 +25,14 @@ class AliasTable(alias: Array[Int], prob: Array[Double]) {
     */
   def this(counts: Vector[Double]) {
     this(new Array[Int](counts.length), new Array[Double](counts.length))
+    init(counts)
+  }
+
+  def init(counts: Vector[Double]){
 
     val n = counts.length
     val countSum = sum(counts)
+    len = countSum
 
     val small = new Array[Int](n)
     val large = new Array[Int](n)
@@ -72,6 +81,21 @@ class AliasTable(alias: Array[Int], prob: Array[Double]) {
     }
   }
 
+  def this(counts: SparseVector[Double], aliasTable: AliasTable) {
+    this(new Array[Int](counts.activeSize), new Array[Double](counts.activeSize))
+    val activeSize = counts.activeSize
+    index = counts.index.slice(0, activeSize)
+    val denseCounts: Vector[Double] = Vector.zeros[Double](activeSize)
+
+    for (i <- 0 until activeSize) {
+      denseCounts(i) = counts.valueAt(i)
+    }
+
+    init(denseCounts)
+    this.aliasTable = aliasTable
+    this.aliasProb = len / (len + this.aliasTable.len)
+  }
+
   /**
     * Draws from the uneven multinomial probability distribution represented by this Alias table
     *
@@ -79,7 +103,20 @@ class AliasTable(alias: Array[Int], prob: Array[Double]) {
     * @return A random outcome from the uneven multinomial probability distribution
     */
   def draw(random: FastRNG): Int = {
-    count += 1
+    if (index == null) {
+      drawFromAlias(random)
+    } else {
+      if (random.nextDouble() < this.aliasProb) {
+        val i = drawFromAlias(random)
+        index(i)
+      } else {
+        this.aliasTable.draw(random)
+      }
+    }
+  }
+
+  private def drawFromAlias(random: FastRNG): Int =
+  {
     val i = random.nextPositiveInt() % alias.length
     if (random.nextDouble() < prob(i)) {
       i

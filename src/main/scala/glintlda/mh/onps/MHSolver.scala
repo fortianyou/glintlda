@@ -1,6 +1,6 @@
 package glintlda.mh.onps
 
-import breeze.linalg.{SparseVector, Vector}
+import breeze.linalg.{DenseVector, SparseVector, Vector}
 import glintlda.mh.AliasTable
 import glintlda.util.{AggregateBuffer, FastRNG, SimpleLock, time}
 import glintlda.{FreqAwareGibbsSample, LDAModel, Solver, WDReverseGibbsSample}
@@ -22,7 +22,8 @@ class MHSolver(model: LDAModel){
   implicit protected val ec = ExecutionContext.Implicits.global
   protected val logger = Logger(LoggerFactory getLogger s"${getClass.getSimpleName}")
   val nOfTopics = model.config.topics
-  var globalSummary: Array[Long] = null
+  var globalSummary: Array[Double] = null
+  var globalAlias: AliasTable = null
   val lock = new SimpleLock(16, logger)
 
   /**
@@ -37,9 +38,15 @@ class MHSolver(model: LDAModel){
     // Pull global topic counts
     val global = Await.result(model.topicCounts.pull((0L until model.config.topics).toArray), 300 seconds)
     val bufferGlobal = SparseVector.zeros[Int](model.config.topics)
-    globalSummary = global
-
     val βsum = model.config.β*model.config.vocabularyTerms
+    globalSummary = global.map(_ + βsum)
+
+
+    val priorStats = DenseVector.zeros[Double](model.config.topics)
+    for (i <- 0 until model.config.topics) {
+      priorStats(i) =  model.config.β/globalSummary(i)
+    }
+    globalAlias = new AliasTable(priorStats)
 
     time(logger, "Ps side sampling wait time: ") {
       for (p <- locations.keySet) {
@@ -49,7 +56,7 @@ class MHSolver(model: LDAModel){
           samples.foreach {
             case (word, sample) =>
 
-              val wordCount = sample.denseWordCounts(nOfTopics)
+              val wordCount = sample.sparseWordCounts(nOfTopics)
               val aliasTable = computeAliasTables(wordCount)
 
               for (i <- 0 until sample.features.length) {
@@ -161,13 +168,13 @@ class MHSolver(model: LDAModel){
 
 
 
-  def computeAliasTables(wordCounts: Vector[Int]): AliasTable = {
-    val probs = wordCounts.map(_.toDouble + model.config.β)
-    for (i <- 0 until nOfTopics) {
-      probs(i) /= globalSummary(i)
+  def computeAliasTables(wordCounts: SparseVector[Int]): AliasTable = {
+    val probs: SparseVector[Double] = wordCounts.mapActivePairs{
+      case (k, v) =>
+        v / globalSummary(k)
     }
 
-    new AliasTable(probs)
+    new AliasTable(probs, globalAlias)
   }
 
 }
