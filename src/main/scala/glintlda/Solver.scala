@@ -35,7 +35,6 @@ abstract class Solver(model: LDAModel, id: Int) {
   implicit protected val timeout = new Timeout(600 seconds)
 
   protected val logger: Logger = Logger(LoggerFactory getLogger s"${getClass.getSimpleName}-$id")
-  protected val ds = new DataServerClient[Int]()
 
   /**
     * Filter low-frequency words with given partition of the data
@@ -90,15 +89,15 @@ abstract class Solver(model: LDAModel, id: Int) {
       val docId = samples(i).docId
       while (j < unFreqSample.features.length) {
         // increase local n(d,t) counts
-        while (!ds.increaseBufferred(docId, unFreqSample.topics(j), 1))
-          ds.flushIncBuffer()
+        model.sparsePS.increaseBufferred(unFreqSample.features(j), unFreqSample.topics(j), 1)
+        //buffer.pushToBuffer(unFreqSample.features(j), unFreqSample.topics(j), 1)
         j += 1
       }
 
       i += 1
     }
 
-    ds.flushIncBuffer()
+    model.sparsePS.flushIncBuffer()
     // Flush power law buffer
     pushLock.acquire()
     aggregateBuffer.flush(model.wordTopicCounts).onComplete(_ => pushLock.release())
@@ -189,7 +188,7 @@ abstract class Solver(model: LDAModel, id: Int) {
     * @param samples The samples to run the algorithm on
     * @param iteration The iteration number
     */
-  protected def fit(samples: Array[GibbsSample], iteration: Int): Unit
+  protected def fit(samples: Array[FreqAwareGibbsSample], iteration: Int): Unit
 
   /**
     * Runs the LDA inference algorithm on given partition of the data without
@@ -219,8 +218,8 @@ object Solver {
     * @param config The configuration
     * @return The trained LDA model
     */
-  def fitMetropolisHastings(sc: SparkContext, gc: Client, samples: RDD[SparseVector[Int]], config: LDAConfig): LDAModel = {
-    fit(sc, gc, samples, config, (model, id) => new MHSolver(model, id))
+  def fitMetropolisHastings(sc: SparkContext, gc: Client, sparsePs: DataServerClient[Int], samples: RDD[SparseVector[Int]], config: LDAConfig): LDAModel = {
+    fit(sc, gc, sparsePs, samples, config, (model, id) => new MHSolver(model, id))
   }
 
   /**
@@ -232,8 +231,8 @@ object Solver {
     * @param config The configuration
     * @return
     */
-  def fitNaive(sc: SparkContext, gc: Client, samples: RDD[SparseVector[Int]], config: LDAConfig): LDAModel = {
-    fit(sc, gc, samples, config, (model, id) => new NaiveSolver(model, id))
+  def fitNaive(sc: SparkContext, gc: Client, sparsePs: DataServerClient[Int], samples: RDD[SparseVector[Int]], config: LDAConfig): LDAModel = {
+    fit(sc, gc, sparsePs, samples, config, (model, id) => new NaiveSolver(model, id))
   }
 
   /**
@@ -247,6 +246,7 @@ object Solver {
     */
   def fit(sc: SparkContext,
           gc: Client,
+          sparsePs: DataServerClient[Int],
           samples: RDD[SparseVector[Int]],
           config: LDAConfig,
           solver: (LDAModel, Int) => Solver): LDAModel = {
@@ -268,18 +268,8 @@ object Solver {
     implicit val ec = ExecutionContext.Implicits.global
     implicit val timeout = new Timeout(60 seconds)
 
-    val (location, lowFreqGibbsSamples) = transform(config, freqAwareGibbsSamples)
-
-    logger.info(s"Data server locations: ${location.mkString(" ")}")
-    location.foreach{
-      case (host, id) =>
-        val ds = new DataServerClient[Int](host)
-        ds.clear()
-    }
     // Construct LDA model and initialize it on the parameter server
-    var model = build(gc, config, freqAwareGibbsSamples, solver)
-
-    val freqGibbsSamples = freqAwareGibbsSamples.map(_.freqSample)
+    var model = build(gc, sparsePs, config, freqAwareGibbsSamples, solver)
 
     // Construct evaluation
     val eval = new Evaluation(config)
@@ -297,8 +287,8 @@ object Solver {
     })
 
     // Iterate
-    var rdd = freqGibbsSamples
-    var prevRdd = freqGibbsSamples
+    var rdd = freqAwareGibbsSamples
+    var prevRdd = rdd
     var prevFuture: Future[Unit] = Future {}
     var lastCheckpointIteration: Int = 0
     var t = 1
@@ -306,6 +296,7 @@ object Solver {
 
       logger.info(s"Starting iteration $t")
 
+      model.sparsePS.resetKey("stage.sparse")
       // Perform training for this iteration
       rdd = rdd.mapPartitionsWithIndex { case (id, it) =>
         val s = solver(model, id)
@@ -330,11 +321,6 @@ object Solver {
           (0.0, 0L)
       }
 
-      time(logger, "local solver use time: ") {
-        val localSolver = new mh.onps.MHSolver(model)
-        localSolver.fit(lowFreqGibbsSamples, location.map(x => (x._2, x._1)))
-      }
-
       if (rebuildCountTable.get()) {
 
         // Something went wrong, remove the current RDD and reset it to the previous iteration's RDD
@@ -346,7 +332,7 @@ object Solver {
         Await.result(prevFuture, Duration.Inf)
         model.wordTopicCounts.destroy()
         model.topicCounts.destroy()
-        model = buildForFreq(gc, config, rdd, solver)
+        model = build(gc, sparsePs, config, rdd, solver)
         rebuildCountTable.set(false)
         t = lastCheckpointIteration + 1
 
@@ -389,7 +375,7 @@ object Solver {
     * @param oldRdd The old RDD
     * @param sc The spark context (needed for deleting checkpoint data)
     */
-  private def removeRdd(oldRdd: RDD[GibbsSample], sc: SparkContext): Unit = {
+  private def removeRdd(oldRdd: RDD[FreqAwareGibbsSample], sc: SparkContext): Unit = {
     if (oldRdd.isCheckpointed) {
       try {
         oldRdd.getCheckpointFile.foreach {
@@ -407,8 +393,8 @@ object Solver {
     *
     * @param samples The samples
     */
-  private def buildForFreq(gc: Client, config: LDAConfig, samples: RDD[GibbsSample], solver: (LDAModel, Int) => Solver): LDAModel = {
-    val model = LDAModel(gc, config)
+  private def buildForFreq(gc: Client, sparsePs: DataServerClient[Int], config: LDAConfig, samples: RDD[GibbsSample], solver: (LDAModel, Int) => Solver): LDAModel = {
+    val model = LDAModel(gc, sparsePs, config)
     samples.foreachPartitionWithIndex { case (id, it) =>
       val s = solver(model, id)
       s.initialize(it.toArray)
@@ -421,8 +407,8 @@ object Solver {
     *
     * @param samples The samples
     */
-  private def build(gc: Client, config: LDAConfig, samples: RDD[FreqAwareGibbsSample], solver: (LDAModel, Int) => Solver): LDAModel = {
-    val model = LDAModel(gc, config)
+  private def build(gc: Client, sparsePs: DataServerClient[Int], config: LDAConfig, samples: RDD[FreqAwareGibbsSample], solver: (LDAModel, Int) => Solver): LDAModel = {
+    val model = LDAModel(gc, sparsePs, config)
 
     logger.info(s"Partition Number: ${samples.getNumPartitions}")
     samples.foreachPartitionWithIndex { case (id, it) =>

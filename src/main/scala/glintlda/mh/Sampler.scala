@@ -1,6 +1,7 @@
 package glintlda.mh
 
 import breeze.linalg.Vector
+import scala.collection.mutable
 import glintlda.LDAConfig
 import glintlda.util.FastRNG
 
@@ -21,7 +22,9 @@ class Sampler(config: LDAConfig, mhSteps: Int = 2, random: FastRNG) {
 
   var infer: Int = 1
   var aliasTable: AliasTable = null
-  var wordCounts: Vector[Long] = null
+  var wordCountVec: Vector[Long] = null
+  var wordCountHash: mutable.Map[Int, Int] = null
+  var stageDensity = true
   var globalCounts: Array[Long] = null
   var documentCounts: Vector[Int] = null
   var documentTopicAssignments: Array[Int] = null
@@ -35,6 +38,7 @@ class Sampler(config: LDAConfig, mhSteps: Int = 2, random: FastRNG) {
     * @return
     */
   def sampleFeature(feature: Int, oldTopic: Int): Int = {
+    if (!stageDensity) return sampleFeatureSimple(feature, oldTopic)
 
     var s: Int = oldTopic
     var mh: Int = 0
@@ -50,8 +54,8 @@ class Sampler(config: LDAConfig, mhSteps: Int = 2, random: FastRNG) {
       if (t != s) {
         var docS = documentCounts(s) + α
         var docT = documentCounts(t) + α
-        var wordS = wordCounts(s) + β
-        var wordT = wordCounts(t) + β
+        var wordS =  wordCountVec(s)  +  β
+        var wordT =  wordCountVec(t)  +  β
         var globalS = globalCounts(s) + βSum
         var globalT = globalCounts(t) + βSum
 
@@ -85,8 +89,8 @@ class Sampler(config: LDAConfig, mhSteps: Int = 2, random: FastRNG) {
       if (t != s) {
         var docS = documentCounts(s) + α
         var docT = documentCounts(t) + α
-        var wordS = wordCounts(s) + β
-        var wordT = wordCounts(t) + β
+        var wordS = (if(stageDensity) wordCountVec(s) else wordCountHash(s)) + β
+        var wordT = (if(stageDensity) wordCountVec(t) else wordCountHash(t)) + β
         var globalS = globalCounts(s) + βSum
         var globalT = globalCounts(t) + βSum
 
@@ -112,6 +116,40 @@ class Sampler(config: LDAConfig, mhSteps: Int = 2, random: FastRNG) {
 
       mh += 1
     }
+    s
+  }
+
+
+  def sampleFeatureSimple(feature: Int, oldTopic: Int): Int = {
+    var s = oldTopic
+    // Word Proposal
+    val t = aliasTable.draw(random)
+    var docS = documentCounts(s) + α
+    var docT = documentCounts(t) + α
+    var wordS = (if (!wordCountHash.contains(s)) 0 else wordCountHash(s)) + β
+    var wordT = (if (!wordCountHash.contains(t)) 0 else wordCountHash(t)) + β
+    var globalS = globalCounts(s) + βSum
+    var globalT = globalCounts(t) + βSum
+
+    val proposalS = wordS / globalS
+    val proposalT = wordT / globalT
+
+    if (s == oldTopic) {
+      docS -= 1
+      wordS -= infer
+      globalS -= infer
+    }
+    if (t == oldTopic) {
+      docT -= 1
+      wordT -= infer
+      globalT -= infer
+    }
+
+    val pi = (docT * wordT * globalS * proposalS) / (docS * wordS * globalT * proposalT)
+    if (random.nextDouble() < pi) {
+      s = t
+    }
+
     s
   }
 

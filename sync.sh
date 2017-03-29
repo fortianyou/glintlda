@@ -7,6 +7,6 @@
 #! /bin/bash
 
 #########################################################################
-JAR=classes/artifacts/glintlda_ds_jar/glintlda.jar
+JAR=classes/artifacts/glintlda_ps_sparse_jar/
 #zip -d $JAR 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*SF'
-scp $JAR root@bda07:/home/gty/LDA/glintlda_ds_jar
+scp -r $JAR root@bda07:/home/gty/LDA/

@@ -26,7 +26,7 @@ class NaiveSolver(model: LDAModel, id: Int) extends Solver(model, id) {
     * @param samples The samples to run the algorithm on
     * @param iteration The iteration number
     */
-  override protected def fit(samples: Array[GibbsSample], iteration: Int): Unit = {
+  override protected def fit(samples: Array[FreqAwareGibbsSample], iteration: Int): Unit = {
 
     // Create random and sampler
     val random = new FastRNG(model.config.seed + id)
@@ -54,7 +54,7 @@ class NaiveSolver(model: LDAModel, id: Int) extends Solver(model, id) {
 
         // Perform resampling
         time(logger, "Resampling time: ") {
-          resample(samples, sampler, global, rowBlock, start, end)
+          resample(samples.map(_.freqSample), sampler, global, rowBlock, start, end)
         }
 
         // Log flush lock wait times

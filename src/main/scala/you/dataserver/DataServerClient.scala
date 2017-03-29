@@ -13,11 +13,14 @@ import scala.collection.mutable
 /**
   * Created by Roger on 17/3/24.
   */
-class DataServerClient[@spec(Double, Int, Long, Float) T](host: String = "localhost",
-                       port: Int = 6379,
-                       bufferSize: Int = 100000)(implicit m: ClassTag[T]) {
+class DataServerClient[@spec(Double, Int, Long, Float) T]
+(val host: String = "localhost",
+ val port: Int = 6379,
+ val bufferSize: Int = 100000)
+(implicit m: ClassTag[T]) extends Serializable{
 
-  val jedisPool = new JedisPool(host, port)
+  @transient
+  lazy val jedisPool = new JedisPool(host, port)
 
   private val bufferDKeys = new Array[String](bufferSize)
   private val bufferTKeys = new Array[String](bufferSize)
@@ -33,45 +36,40 @@ class DataServerClient[@spec(Double, Int, Long, Float) T](host: String = "localh
   private val delBufferTKeys = new Array[String](bufferSize)
   private var delBufferIndex = 0
 
-  private var scanOffset = 0
-  private var scanFlag = true
+  def incKey(key: String): Int = {
+    var jedis: Jedis = null
 
-  def resetScan(): Unit = {
-    scanFlag = true
+    try {
+      jedis = jedisPool.getResource
+      jedis.incr(key).toInt
+    } finally {
+      if (jedis != null)
+      jedis.close()
+    }
   }
 
-  def scan(): mutable.Map[Int, mutable.Map[Int, T]] = {
-    if (scanFlag == false) return null
+  def getKey(key: String): Int = {
     var jedis: Jedis = null
-    var keys: Seq[String] = null
+
     try {
-      //scan and reture keys of this batch
       jedis = jedisPool.getResource
-      val ret = jedis.scan(scanOffset.toString)
-      scanOffset = ret.getStringCursor.toInt
-      keys = ret.getResult
-
-      val pipeline = jedis.pipelined()
-      val responses = keys.map {
-        key =>
-          pipeline.hgetAll(key)
-      }
-      pipeline.sync()
-
-      val results = mutable.Map[Int, mutable.Map[Int, T]]()
-      for (i <- 0 until keys.length) {
-        val res = parse(responses(i))
-        if (res != null) {
-          val k = DataServerClient.keyDecode(keys(i))
-          results(k) = res
-        }
-      }
-
-      results
+      jedis.get(key).toInt
     } finally {
-      if (jedis != null) jedis.close()
+      if (jedis != null)
+      jedis.close()
     }
+  }
 
+  def resetKey(key: String): Unit = {
+    var jedis: Jedis = null
+
+    try {
+      jedis = jedisPool.getResource
+      jedis.del(key)
+    } finally {
+      if (jedis != null)
+      jedis.close()
+    }
   }
 
   @inline

@@ -21,11 +21,11 @@ class Evaluation(config: LDAConfig) extends Serializable {
     * Computes local document log likelihood and token counts and aggregates them together
     *
     * @param current The current count
-    * @param sample The sample
     * @return The new count
     */
-  def aggregateDocument(current: (Double, Long), sample: GibbsSample): (Double, Long) = {
+  def aggregateDocument(current: (Double, Long), freqSample: FreqAwareGibbsSample): (Double, Long) = {
 
+    val sample = freqSample.freqSample
     // Initialize
     val localTokenCounts: Long = sample.features.length
     var localDocLikelihood: Double = 0.0
@@ -79,6 +79,7 @@ class Evaluation(config: LDAConfig) extends Serializable {
         while (i < rowBlock.length) {
           var j = 0
           while (j < rowBlock(i).length) {
+           // println(s"view: $wordLikelihood ${rowBlock(i)(j).toDouble}")
             wordLikelihood += lgamma(config.β + rowBlock(i)(j).toDouble)
             wordLikelihood -= lgamma(config.β)
             j += 1
@@ -88,10 +89,13 @@ class Evaluation(config: LDAConfig) extends Serializable {
         start += rowBlock.length
     }
 
+    //println(s"Un-normalized likelihood: ${wordLikelihood}")
+
     // Normalize
     val global = Await.result(model.topicCounts.pull((0L until config.topics).toArray), timeout.duration)
     var i = 0
     while (i < global.length) {
+     // println(s"${global(i).toDouble} ${lgamma(config.vocabularyTerms * config.β)}   ${lgamma(config.vocabularyTerms * config.β + global(i).toDouble)}")
       wordLikelihood += lgamma(config.vocabularyTerms * config.β)
       wordLikelihood -= lgamma(config.vocabularyTerms * config.β + global(i).toDouble)
       i += 1

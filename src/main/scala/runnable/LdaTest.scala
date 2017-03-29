@@ -7,6 +7,7 @@ import glint.Client
 import glintlda.{LDAConfig, Solver}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.{SparkConf, SparkContext}
+import you.dataserver.DataServerClient
 
 
 class LdaTest extends Configurable{
@@ -50,7 +51,7 @@ class LdaTest extends Configurable{
     }
 
     val gc = Client(ConfigFactory.parseFile(new java.io.File("resources/glint.conf")))
-
+    val sparsePs = new DataServerClient[Int]("bda02")
     // LDA topic model with 100,000 terms and 100 topics
     val ldaConfig = new LDAConfig()
     ldaConfig.setα(alphaOpt.getValue)
@@ -60,7 +61,7 @@ class LdaTest extends Configurable{
     ldaConfig.setPowerlawCutoff((word2id.size * cutOffOpt.getValue).toInt)
     //ldaConfig.setPowerlawCutoff(word2id.size)
     ldaConfig.setPartitions(partOpt.getValue)
-    val model = Solver.fitMetropolisHastings(sc, gc, idData, ldaConfig)
+    val model = Solver.fitMetropolisHastings(sc, gc, sparsePs, idData, ldaConfig)
 
   }
 }
