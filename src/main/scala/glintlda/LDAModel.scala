@@ -11,6 +11,7 @@ import glint.models.client.retry.{RetryBigMatrix, RetryBigVector}
 import glint.models.client.{BigMatrix, BigVector}
 import glint.partitioning.cyclic.CyclicPartitioner
 import glintlda.util.{BoundedPriorityQueue, SimpleLock, ranges}
+import org.apache.spark.Accumulator
 import org.apache.spark.mllib.clustering.LocalLDAModel
 import you.dataserver.DataServerClient
 
@@ -27,6 +28,7 @@ import scala.concurrent.duration._
 class LDAModel(var wordTopicCounts: BigMatrix[Long],
                var topicCounts: BigVector[Long],
                var sparsePS: DataServerClient[Int],
+               var throughoutAccum: Accumulator[Long],
                val config: LDAConfig) extends Serializable {
 
   /**
@@ -132,12 +134,12 @@ object LDAModel {
     *
     * @param config The LDA configuration
     */
-  def apply(gc: Client, sparsePs: DataServerClient[Int],  config: LDAConfig): LDAModel = {
+  def apply(gc: Client, sparsePs: DataServerClient[Int], accum: Accumulator[Long], config: LDAConfig): LDAModel = {
     //val topicWordCounts = gc.matrix[Long](config.vocabularyTerms, config.topics, 2, (x,y) => CyclicPartitioner(x, y))
     val topicWordCounts = gc.matrix[Long](config.powerlawCutoff, config.topics, 2, (x,y) => CyclicPartitioner(x, y))
     val granularTopicWordCounts = new GranularBigMatrix[Long](topicWordCounts, 120000)
     val globalCounts = new RetryBigVector[Long](gc.vector[Long](config.topics, 1), 5)
-    new LDAModel(new RetryBigMatrix[Long](granularTopicWordCounts, 5), globalCounts, sparsePs, config)
+    new LDAModel(new RetryBigMatrix[Long](granularTopicWordCounts, 5), globalCounts, sparsePs, accum, config)
   }
 
   /**
@@ -151,7 +153,7 @@ object LDAModel {
     implicit val ec = ExecutionContext.Implicits.global
     implicit val timeout = new Timeout(300 seconds)
 
-    val model = apply(gc, null, config)
+    val model = apply(gc, null, null, config)
     val buff = new BufferedBigMatrix[Long](model.wordTopicCounts, 100000)
     val globs = new Array[Long](config.topics)
     var i = 0
@@ -192,7 +194,7 @@ object LDAModel {
     val config = is.readObject().asInstanceOf[LDAConfig]
 
     // Create a model with given configuration
-    val model = LDAModel(gc, null, config)
+    val model = LDAModel(gc, null, null, config)
     implicit val ec = ExecutionContext.Implicits.global
     implicit val timeout = new Timeout(300 seconds)
 

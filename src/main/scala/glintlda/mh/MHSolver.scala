@@ -20,8 +20,8 @@ import scala.concurrent.duration._
 class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
 
   var nwt: mutable.HashMap[Int, mutable.Map[Int, Int]] = null
-  val bufferSize = 100000
-  val lock = new SimpleLock(16, logger)
+  val bufferSize = 10000
+  val lock = new SimpleLock(10, logger)
   var globalSummary: Array[Double] = null
   var globalAlias: AliasTable = null
   val nOfTopics = model.config.topics
@@ -100,6 +100,8 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
               }
           }
       }
+
+      model.throughoutAccum += (posCount + zeroCount + posCount)
       model.sparsePS.flushDelBuffer()
       logger.info(s"posCount = $posCount, zeroCount = $zeroCount, negCount = $negCount")
       var ret = model.sparsePS.incKey("stage.sparse")
@@ -159,7 +161,10 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
 
       lock.acquire()
       val flushGlobal = model.topicCounts.push((0L until model.config.topics).toArray, bufferGlobal)
-      flushGlobal.onComplete(_ => lock.release())
+      flushGlobal.onComplete{
+        _ => lock.release()
+          logger.info(s"Release lock, asseses ${lock.accesses}")
+      }
       flushGlobal.onFailure { case ex => println(ex.getMessage + "\n" + ex.getStackTraceString) }
 
 

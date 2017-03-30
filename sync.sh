@@ -9,4 +9,4 @@
 #########################################################################
 JAR=classes/artifacts/glintlda_ps_sparse_jar/
 #zip -d $JAR 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*SF'
-scp -r $JAR root@bda07:/home/gty/LDA/
+scp -r $JAR guotianyou@bda07:/home/gty/LDA/
