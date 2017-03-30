@@ -194,13 +194,6 @@ object GibbsSample {
 
     val hasUnFreq = unFreqTotalTokens > 0
 
-    //TODO: 删除打印
-    if (hasUnFreq) {
-      println(cutoff)
-      println(cutOffIndex)
-      println(sv.toString())
-      println(s"$freqTotalTokens $unFreqTotalTokens")
-    }
     val freqSample = new GibbsSample(new Array[Int](freqTotalTokens), new Array[Int](freqTotalTokens), docId, hasUnFreq)
     val unFreqSample = new GibbsSample(new Array[Int](unFreqTotalTokens), new Array[Int](unFreqTotalTokens), docId, hasUnFreq)
 

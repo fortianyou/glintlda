@@ -52,6 +52,7 @@ class LdaTest extends Configurable{
 
     val gc = Client(ConfigFactory.parseFile(new java.io.File("resources/glint.conf")))
     val sparsePs = new DataServerClient[Int]("bda02")
+    sparsePs.clear()
     // LDA topic model with 100,000 terms and 100 topics
     val ldaConfig = new LDAConfig()
     ldaConfig.setα(alphaOpt.getValue)

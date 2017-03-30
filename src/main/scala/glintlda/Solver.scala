@@ -89,6 +89,7 @@ abstract class Solver(model: LDAModel, id: Int) {
       val docId = samples(i).docId
       while (j < unFreqSample.features.length) {
         // increase local n(d,t) counts
+        if (model.sparsePS.isIncBuffFull) model.sparsePS.flushIncBuffer()
         model.sparsePS.increaseBufferred(unFreqSample.features(j), unFreqSample.topics(j), 1)
         //buffer.pushToBuffer(unFreqSample.features(j), unFreqSample.topics(j), 1)
         j += 1

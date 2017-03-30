@@ -82,50 +82,31 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
       var zeroCount = 0
       var negCount = 0
       var posCount = 0
-      var ret = model.sparsePS.incKey("stage.sparse")
-      time(logger, "Del sparse values: ") {
-        if (ret == model.config.partitions) {
-          nwt.foreach {
-            case (word, nt) =>
-              nt.foreach {
-                case (t, v) =>
-                  if (v == 0) {
-                    if (model.sparsePS.isDelBuffFull) {
-                      model.sparsePS.flushDelBuffer()
-                    }
-                    model.sparsePS.delBufferred(word, t)
-                    zeroCount += 1
-                  } else if (v < 0) {
-                    negCount +=1
-                  } else {
-                    posCount += 1
-                  }
+
+      nwt.foreach {
+        case (word, nt) =>
+          nt.foreach {
+            case (t, v) =>
+              if (v == 0) {
+                if (model.sparsePS.isDelBuffFull) {
+                  model.sparsePS.flushDelBuffer()
+                }
+                model.sparsePS.delBufferred(word, t)
+                zeroCount += 1
+              } else if (v < 0) {
+                negCount += 1
+              } else {
+                posCount += 1
               }
           }
-          model.sparsePS.flushDelBuffer()
-        } else {
-           nwt.foreach {
-            case (word, nt) =>
-              nt.foreach {
-                case (t, v) =>
-                  if (v == 0) {
-                    zeroCount += 1
-                  } else if (v < 0) {
-                    negCount +=1
-                  } else {
-                    posCount += 1
-                  }
-              }
-          }
-          while (ret != model.config.partitions) {
-            Thread.sleep(100)
-            ret = model.sparsePS.getKey("stage.sparse")
-          }
-        }
       }
-
-
+      model.sparsePS.flushDelBuffer()
       logger.info(s"posCount = $posCount, zeroCount = $zeroCount, negCount = $negCount")
+      var ret = model.sparsePS.incKey("stage.sparse")
+      while (ret != model.config.partitions) {
+        Thread.sleep(100)
+        ret = model.sparsePS.getKey("stage.sparse")
+      }
 
       var rowWait = System.currentTimeMillis()
 
@@ -174,10 +155,12 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
         }
       }
 
+      model.sparsePS.flushIncBuffer()
+
       lock.acquire()
       val flushGlobal = model.topicCounts.push((0L until model.config.topics).toArray, bufferGlobal)
-    flushGlobal.onComplete(_ => lock.release())
-    flushGlobal.onFailure { case ex => println(ex.getMessage + "\n" + ex.getStackTraceString) }
+      flushGlobal.onComplete(_ => lock.release())
+      flushGlobal.onFailure { case ex => println(ex.getMessage + "\n" + ex.getStackTraceString) }
 
 
       logger.info(s"each block use time: ${tot_time / 1000000 / tot_blocks}ms, total ${tot_blocks} blocks")
@@ -284,7 +267,6 @@ class MHSolver(model: LDAModel, id: Int) extends Solver(model, id) {
       i += 1
     }
 
-    model.sparsePS.flushIncBuffer()
      // Flush buffer to push changes to word topic counts
     flushBuffer(buffer, lock)
   }
