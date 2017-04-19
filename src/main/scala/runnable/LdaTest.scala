@@ -54,6 +54,9 @@ class LdaTest extends Configurable{
     val sparsePs = new DataServerClient[Int]("bda02")
     sparsePs.clear()
     // LDA topic model with 100,000 terms and 100 topics
+
+    println("Vocab Size: " + word2id.size)
+    println("Cutoff Size: " + word2id.size * cutOffOpt.getValue)
     val ldaConfig = new LDAConfig()
     ldaConfig.setα(alphaOpt.getValue)
     ldaConfig.setβ(betaOpt.getValue)
