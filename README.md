@@ -1,34 +1,11 @@
-# Glint LDA
-Scalable Distributed LDA implementation for [Spark](http://spark.apache.org/) & [Glint](https://github.com/rjagerman/glint)
 
-This implementation is based on [LightLDA](https://github.com/Microsoft/lightlda).
+# 摘要
+主题模型作为一种能够挖掘文本语义的技术受到了研究者的青睐,并且在业界得到 了广泛的应用。在社交网络等领域中,主题模型是文本分类,检索以及推荐等应用的一 项重要技术。
 
-## Usage
+随着移动互联网的发展应用,社交网络等许多场景中数据的产生正呈现出越来越快 的增长趋势。许多数据都具有高速、海量、实时、突发等主要特性。人们通常形象地将 这类数据称为流式数据。
+面对这种新型的数据流式特性,以往的主题模型的训练方法遭遇了巨大的挑战。流 式机器学习的主要挑战在于,根据流式数据的特性,算法必须满足使用内存大小固定, 高效实时,并且能够克服数据变动带来的对模型训练的影响。以往大部分的主题模型算 法实现都采用了批量的学习方法,但是批量学习并不满足上述要求。
 
-Make sure you have Glint running, for a simple localhost test with 2 servers, you can locally run Glint as follows:
+通过调研,本文发现流式主题模型的设计与实现的主要难题在于:(1) 流式数据具 有海量无限的体量,并且数据分布时刻发生变化;(2) 在社交网络等类似的数据环境下, 不断会有新词出现,词表是动态增长的;海量参数的分布式存储与并行更新同步困难; (3) 流式学习系统对算法实时性的要求极高;
 
-    sbt "run master"
-    sbt "run server"
-    sbt "run server"
-    
-Next, load in a dataset in Spark with an RDD:
-
-    // Preprocessing of data ...
-    // End result should be an RDD of breeze sparse vectors that represent bag-of-words term frequency vectors
-    rdd = sc.textFile(...).map(x => SparseVector[Int](...))
-    
-Construct the Glint client that acts as an interface to the running parameter servers
-
-    // Open glint client with a path to a specific configuration file
-    val gc = Client(ConfigFactory.parseFile(new java.io.File(configFile)))
-    
-Set the LDA parameters and call the `fitMetropolisHastings` function to run the LDA algorithm
-
-    // LDA topic model with 100,000 terms and 100 topics
-    val ldaConfig = new LDAConfig()
-    ldaConfig.setα(0.5)
-    ldaConfig.setβ(0.01)
-    ldaConfig.setTopics(100)
-    ldaConfig.setVocabularyTerms(100000)
-    val model = Solver.fitMetropolisHastings(sc, gc, rdd, ldaConfig, 100)
+本文主要工作是设计与实现高效的分布式流式主题模型,以应对上面提出的挑战。 首先,本文提出了一种针对流式数据的在线流式主题模型。该模型能够有效地克服流式 数据的无限性与变动性,不仅算法能够动态地更新模型,而且具有概念迁移的能力。然 后,本文从算法实现的角度出发设计了稠密和稀疏并存的混合参数数据结构,解决了动 态词表所带来的参数存储与更新的难题。最后,本文提出了一种新的采样方法,大大降 低了采样的复杂度,并在此基础上进一步优化了算法的实现,保证了系统对算法实时性 的要求。本文提出的分布式流式主题模型的实现是一种高效,实时的具有动态演化能力 的主题模型。
     
